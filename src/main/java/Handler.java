@@ -20,7 +20,6 @@ import lombok.SneakyThrows;
 import org.apache.commons.codec.binary.Base64;
 import org.springframework.http.*;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
-import org.springframework.util.ObjectUtils;
 import org.springframework.web.client.RestTemplate;
 
 import javax.imageio.ImageIO;
@@ -32,10 +31,12 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -58,10 +59,6 @@ public class Handler implements Function<String, Handler.Response> {
         request.setMessages(List.of(message));
 
         new Handler().apply(new ObjectMapper().writeValueAsString(request));
-    }
-
-    private static boolean isValueChanged(Object newValue, Object previousValue) {
-        return !Objects.equals(newValue, previousValue);
     }
 
     @SneakyThrows
@@ -365,7 +362,7 @@ public class Handler implements Function<String, Handler.Response> {
             @JsonProperty("x")
             private String x;
 
-            @JsonProperty("x")
+            @JsonProperty("y")
             private String y;
         }
 
