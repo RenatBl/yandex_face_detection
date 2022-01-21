@@ -10,13 +10,13 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.*;
 import com.amazonaws.services.sqs.AmazonSQSClientBuilder;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.SneakyThrows;
+import models.FaceInfoRequest;
+import models.FaceInfoResponse;
+import models.Request;
+import models.Response;
 import org.apache.commons.codec.binary.Base64;
 import org.springframework.http.*;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
@@ -34,20 +34,19 @@ import java.io.InputStream;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-public class Handler implements Function<String, Handler.Response> {
+public class Handler implements Function<String, Response> {
 
-    private static final String BUCKET_NAME = System.getenv("BUCKET_NAME");
-    private static final String FOLDER_ID = System.getenv("FOLDER_ID");
-    private static final String QUEUE_NAME = System.getenv("QUEUE_NAME");
+    public static final String BUCKET_NAME = System.getenv("BUCKET_NAME");
+    public static final String FOLDER_ID = System.getenv("FOLDER_ID");
+    public static final String QUEUE_NAME = System.getenv("QUEUE_NAME");
     private static final String ACCESS_KEY = System.getenv("ACCESS_KEY");
     private static final String SECRET_KEY = System.getenv("SECRET_KEY");
-    private static final String AUTH_TOKEN = "Bearer " + System.getenv("AUTH_TOKEN");
+    public static final String AUTH_TOKEN = "Bearer " + System.getenv("AUTH_TOKEN");
 
     @SneakyThrows
     public static void main(String[] args) {
@@ -71,11 +70,10 @@ public class Handler implements Function<String, Handler.Response> {
         System.out.println("ACCESS_KEY " + ACCESS_KEY);
         System.out.println("SECRET_KEY " + SECRET_KEY);
         System.out.println("AUTH_TOKEN " + AUTH_TOKEN);
-        ObjectMapper mapper = new ObjectMapper();
 
-        System.out.println("String request: " + mapper.readTree(stringRequest));
+        System.out.println("String request: " + stringRequest);
 
-        Request request = mapper.readValue(stringRequest, Request.class);
+        Request request = parseJson(stringRequest, Request.class);
         // download image
         String fileId = request.getMessages().stream()
                 .map(Request.Message::getDetails)
@@ -110,14 +108,14 @@ public class Handler implements Function<String, Handler.Response> {
         List<String> faceImagesFilenames = uploadResults.stream()
                 .map(PutObjectResult::getETag)
                 .collect(Collectors.toList());
-        sendMessageToMessageQueue(fileId, faceImagesFilenames);
+        sendMessageToMessageQueue(faceImagesFilenames);
         System.out.println("Face images names: " + faceImagesFilenames);
 
         return new Response(200, "OK");
     }
 
     @SneakyThrows
-    private BufferedImage downloadImage(String fileId) {
+    public static BufferedImage downloadImage(String fileId) {
         AmazonS3 s3 = connectToAws();
 
         ListObjectsV2Result result = s3.listObjectsV2(BUCKET_NAME);
@@ -171,9 +169,13 @@ public class Handler implements Function<String, Handler.Response> {
 
     @SneakyThrows
     private List<BufferedImage> downloadImageAndCutFaces(FaceInfoResponse response, BufferedImage originalImage) {
+        if (response == null || response.getResults() == null) {
+            return new ArrayList<>();
+        }
+
         List<BufferedImage> images = new ArrayList<>();
 
-        response.results.stream()
+        response.getResults().stream()
                 .map(FaceInfoResponse.Result::getResults)
                 .flatMap(List::stream)
                 .map(FaceInfoResponse.Result2::getFaceDetection)
@@ -199,7 +201,7 @@ public class Handler implements Function<String, Handler.Response> {
     }
 
     @SneakyThrows
-    private void sendMessageToMessageQueue(String filename, List<String> faceImagesFilenames) {
+    private void sendMessageToMessageQueue(List<String> faceImagesFilenames) {
         AWSCredentialsProvider credentials = new AWSStaticCredentialsProvider(new BasicAWSCredentials(ACCESS_KEY,
                 SECRET_KEY));
 
@@ -229,15 +231,12 @@ public class Handler implements Function<String, Handler.Response> {
         MessageProducer producer = session.createProducer(queue);
 
         // send message with files info
-        String msg = "BRK func. Faces found and saved at " +
-                OffsetDateTime.now().format(DateTimeFormatter.ofPattern("hh:mm:ss dd.MM.yyyy")) +
-                ". Original image: " + filename +
-                ". Images of detected faces: " + String.join(", ", faceImagesFilenames);
+        String msg = String.join(";", faceImagesFilenames);
         Message message = session.createTextMessage(msg);
         producer.send(message);
     }
 
-    private static AmazonS3 connectToAws() {
+    public static AmazonS3 connectToAws() {
         BasicAWSCredentials credentials = new BasicAWSCredentials(ACCESS_KEY, SECRET_KEY);
 
         return AmazonS3ClientBuilder.standard()
@@ -261,186 +260,8 @@ public class Handler implements Function<String, Handler.Response> {
         return restTemplate;
     }
 
-    @Data
-    @AllArgsConstructor
-    @NoArgsConstructor
-    public static class Request {
-
-        @JsonProperty("messages")
-        private List<Message> messages;
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class TracingContext {
-
-            @JsonProperty("trace_id")
-            private String traceId;
-
-            @JsonProperty("span_id")
-            private String spanId;
-
-            @JsonProperty("parent_span_id")
-            private String parentSpanId;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class EventMetadata {
-
-            @JsonProperty("event_id")
-            private String eventId;
-
-            @JsonProperty("event_type")
-            private String eventType;
-
-            @JsonProperty("created_at")
-            private Date createdAt;
-
-            @JsonProperty("tracing_context")
-            private TracingContext tracingContext;
-
-            @JsonProperty("cloud_id")
-            private String cloudId;
-
-            @JsonProperty("folder_id")
-            private String folderId;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Details {
-
-            @JsonProperty("bucket_id")
-            private String bucketId;
-
-            @JsonProperty("object_id")
-            private String objectId;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Message {
-
-            @JsonProperty("event_metadata")
-            private EventMetadata eventMetadata;
-
-            @JsonProperty("details")
-            private Details details;
-        }
-    }
-
-    @Data
-    @NoArgsConstructor
-    public static class Response {
-
-        private int statusCode;
-        private String body;
-
-        public Response(int statusCode, String body) {
-            this.statusCode = statusCode;
-            this.body = body;
-        }
-    }
-
-    @Data
-    @AllArgsConstructor
-    @NoArgsConstructor
-    private static class FaceInfoResponse {
-
-        @JsonProperty("results")
-        private List<Result> results;
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Vertex {
-
-            @JsonProperty("x")
-            private String x;
-
-            @JsonProperty("y")
-            private String y;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class BoundingBox {
-
-            @JsonProperty("vertices")
-            private List<Vertex> vertices;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Face {
-
-            @JsonProperty("boundingBox")
-            private BoundingBox boundingBox;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class FaceDetection {
-
-            @JsonProperty("faces")
-            private List<Face> faces;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Result {
-
-            @JsonProperty("results")
-            private List<Result2> results;
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Result2 {
-
-            @JsonProperty("faceDetection")
-            public FaceDetection faceDetection;
-        }
-    }
-
-    @Data
-    @AllArgsConstructor
-    @NoArgsConstructor
-    private static class FaceInfoRequest {
-
-        @JsonProperty("folderId")
-        private String folderId;
-
-        @JsonProperty("analyze_specs")
-        private List<AnalyzeSpec> analyzeSpecs;
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class AnalyzeSpec {
-
-            @JsonProperty("content")
-            private String content;
-
-            private List<Feature> features = List.of(new Feature());
-        }
-
-        @Data
-        @AllArgsConstructor
-        @NoArgsConstructor
-        private static class Feature {
-
-            @JsonProperty("type")
-            private String type = "FACE_DETECTION";
-        }
+    @SneakyThrows
+    public static <T> T parseJson(String json, Class<T> toClass) {
+        return new ObjectMapper().readValue(json, toClass);
     }
 }
